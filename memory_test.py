@@ -8,13 +8,14 @@ from tkinter import *
 from tkinter import ttk, filedialog, messagebox
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
+from ttkbootstrap import Style
 
 class SSDTester:
     def __init__(self, root):
         self.root = root
         self.root.title("Тест витривалості SSD")
-        self.root.geometry("650x580")
-        self.root.configure(bg="#0d1117")
+        self.root.geometry("750x700")
+        self.style = Style("darkly")
 
         self.font_family = ("Segoe UI", 10)
 
@@ -22,6 +23,7 @@ class SSDTester:
         self.log_folder = StringVar()
         self.gb_to_write = IntVar(value=1)
         self.cycles = IntVar(value=1)
+        self.stop_test = False
 
         self.progress = None
         self.report_data = []
@@ -29,24 +31,18 @@ class SSDTester:
         self.build_gui()
 
     def build_gui(self):
-        style = ttk.Style()
-        style.theme_use("default")
-
-        style.configure("TLabel", background="#0d1117", foreground="#c9d1d9", font=self.font_family)
-        style.configure("TButton", font=self.font_family, padding=6, background="#238636", foreground="white")
-        style.map("TButton", background=[("active", "#2ea043")], foreground=[("disabled", "gray")])
-        style.configure("TSpinbox", font=self.font_family)
-        style.configure("TFrame", background="#0d1117")
-        style.configure("Horizontal.TProgressbar", troughcolor="#21262d", background="#238636", thickness=20)
-
         frame = ttk.Frame(self.root)
         frame.pack(pady=20, padx=20)
 
         ttk.Label(frame, text="Папка для запису на SSD:").grid(row=0, column=0, sticky=W, padx=5, pady=5)
         ttk.Button(frame, text="Обрати", command=self.select_test_folder).grid(row=0, column=1, padx=5)
+        self.test_folder_label = ttk.Label(frame, text="")
+        self.test_folder_label.grid(row=0, column=2, sticky=W, padx=5)
 
         ttk.Label(frame, text="Папка для логів та графіків:").grid(row=1, column=0, sticky=W, padx=5, pady=5)
         ttk.Button(frame, text="Обрати", command=self.select_log_folder).grid(row=1, column=1, padx=5)
+        self.log_folder_label = ttk.Label(frame, text="")
+        self.log_folder_label.grid(row=1, column=2, sticky=W, padx=5)
 
         ttk.Label(frame, text="Обсяг запису (ГБ):").grid(row=2, column=0, sticky=W, padx=5, pady=5)
         Spinbox(frame, from_=1, to=1000, textvariable=self.gb_to_write, width=10, font=self.font_family).grid(row=2, column=1, padx=5)
@@ -54,34 +50,42 @@ class SSDTester:
         ttk.Label(frame, text="Кількість циклів:").grid(row=3, column=0, sticky=W, padx=5, pady=5)
         Spinbox(frame, from_=1, to=1000, textvariable=self.cycles, width=10, font=self.font_family).grid(row=3, column=1, padx=5)
 
-        self.progress = ttk.Progressbar(self.root, orient=HORIZONTAL, length=500, mode='determinate', style="Horizontal.TProgressbar")
+        self.progress = ttk.Progressbar(self.root, orient=HORIZONTAL, length=500, mode='determinate')
         self.progress.pack(pady=15)
 
-        button_frame = Frame(self.root, bg="#0d1117")
+        button_frame = Frame(self.root)
         button_frame.pack(pady=5)
 
         ttk.Button(button_frame, text="Почати тест", command=self.start_test_thread).grid(row=0, column=0, padx=10, pady=5)
         ttk.Button(button_frame, text="Експортувати у JSON", command=self.export_json_report).grid(row=0, column=1, padx=10, pady=5)
         ttk.Button(button_frame, text="Експорт у CSV (Excel)", command=self.export_csv_report).grid(row=0, column=2, padx=10, pady=5)
-        ttk.Button(button_frame, text="Тест всього SSD", command=self.start_full_test_thread).grid(row=1, column=0, columnspan=3, pady=10)
+        ttk.Button(button_frame, text="Тест всього SSD", command=self.start_full_test_thread).grid(row=1, column=0, columnspan=2, pady=10)
+        ttk.Button(button_frame, text="Зупинити тест", command=self.stop_test_run).grid(row=1, column=2, pady=10)
 
     def select_test_folder(self):
         folder = filedialog.askdirectory()
         if folder:
             self.test_folder.set(folder)
+            self.test_folder_label.config(text=folder)
 
     def select_log_folder(self):
         folder = filedialog.askdirectory()
         if folder:
             self.log_folder.set(folder)
+            self.log_folder_label.config(text=folder)
 
     def start_test_thread(self):
+        self.stop_test = False
         thread = threading.Thread(target=self.run_test)
         thread.start()
 
     def start_full_test_thread(self):
+        self.stop_test = False
         thread = threading.Thread(target=self.run_full_capacity_test)
         thread.start()
+
+    def stop_test_run(self):
+        self.stop_test = True
 
     def compute_checksum(self, path):
         sha256 = hashlib.sha256()
@@ -104,12 +108,17 @@ class SSDTester:
         log_file_path = os.path.join(log_folder, f"ssd_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
 
         for cycle in range(1, cycles + 1):
+            if self.stop_test:
+                break
+
             start_time = time.time()
             self.progress["value"] = 0
             self.progress["maximum"] = gb
 
             file_checksums = {}
             for i in range(gb):
+                if self.stop_test:
+                    break
                 file_path = os.path.join(folder, f"testfile_{i}.bin")
                 data = os.urandom(1024 * 1024 * 1024)
                 with open(file_path, "wb") as f:
@@ -119,11 +128,20 @@ class SSDTester:
                 self.root.update_idletasks()
 
             for path, original_hash in file_checksums.items():
+                if self.stop_test:
+                    break
                 read_hash = self.compute_checksum(path)
                 if read_hash != original_hash:
-                    messagebox.showerror("Помилка", f"❌ Контрольна сума не співпала у {path}")
-                    return
-                os.remove(path)
+                    with open(log_file_path, "a", encoding="utf-8") as f:
+                        f.write(f"❌ ПОМИЛКА: Контрольна сума не співпала у {path}\n")
+                        f.write(f"Очікувана: {original_hash}\nОтримана: {read_hash}\n")
+                    user_choice = messagebox.askyesno("Помилка", f"Контрольна сума не співпала у {path}.\nПродовжити тест?")
+                    if not user_choice:
+                        return
+
+            for path in file_checksums:
+                if os.path.exists(path):
+                    os.remove(path)
 
             end_time = time.time()
             cycle_duration = end_time - start_time
@@ -160,12 +178,14 @@ class SSDTester:
         cycle = 0
         gb_written = 0
 
-        while True:
+        while not self.stop_test:
             cycle += 1
             file_checksums = {}
             i = 0
             try:
                 while True:
+                    if self.stop_test:
+                        return
                     file_path = os.path.join(folder, f"fullfile_{i}.bin")
                     data = os.urandom(1024 * 1024 * 1024)
                     with open(file_path, "wb") as f:
@@ -185,8 +205,10 @@ class SSDTester:
                 if read_hash != original_hash:
                     with open(log_file_path, "a", encoding="utf-8") as f:
                         f.write(f"❌ ПОМИЛКА: Контрольна сума не співпала у файлі {path} після {cycle} циклів, {gb_written} ГБ\n")
-                    messagebox.showerror("Помилка", f"Контрольна сума не співпала. SSD пошкоджений.\nЦикл: {cycle}")
-                    return
+                        f.write(f"Очікувана: {original_hash}\nОтримана: {read_hash}\n")
+                    user_choice = messagebox.askyesno("Помилка", f"Контрольна сума не співпала у {path}.\nПродовжити тест?")
+                    if not user_choice:
+                        return
 
             for path in file_checksums:
                 if os.path.exists(path):
@@ -241,4 +263,3 @@ if __name__ == "__main__":
     root = Tk()
     app = SSDTester(root)
     root.mainloop()
-
